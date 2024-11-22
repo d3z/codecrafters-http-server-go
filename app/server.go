@@ -19,6 +19,7 @@ type Path struct {
 type Request struct {
 	Method string
 	Path   Path
+	Headers map[string]string
 }
 
 func main() {
@@ -41,6 +42,9 @@ func main() {
 
 	if request.Path.Parts[0] == "echo" {
 		writeResponse(conn, request.Path.Parts[1])
+	} else if request.Path.Parts[0] == "user-agent" {
+		useragent := request.Headers["User-Agent"]
+		writeResponse(conn, useragent)
 	} else if request.Path.FullPath == "/" {
 		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
 	} else {
@@ -74,14 +78,21 @@ func writeHeader(conn net.Conn, header string, value string) {
 	conn.Write([]byte(fmt.Sprintf("%s: %s\r\n", header, value)))
 }
 
-func parseRequest(request []byte) Request {
-	requestLines := strings.Split(string(request), "\r\n")
+func parseRequest(requestStrings []byte) Request {
+	requestLines := strings.Split(string(requestStrings), "\r\n")
 	requestLine := requestLines[0]
 	requestLineParts := strings.Split(requestLine, " ")
-	return Request{
+
+	request := Request{
 		Method: requestLineParts[0],
 		Path:   parsePath(requestLineParts[1]),
 	}
+
+	if len(requestLines) > 1 {
+		request.Headers = parseHeaders(requestLines[1:])
+	}
+
+	return request
 }
 
 func parsePath(path string) Path {
@@ -90,4 +101,15 @@ func parsePath(path string) Path {
 		FullPath: path,
 		Parts:    pathParts[1:],
 	}
+}
+
+func parseHeaders(headerStrings []string) map[string]string {
+	headers := make(map[string]string)
+	for _, headerString := range headerStrings {
+		headerParts := strings.Split(headerString, ": ")
+		if len(headerParts) == 2 {
+			headers[headerParts[0]] = headerParts[1]
+		}
+	}
+	return headers
 }
