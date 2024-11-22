@@ -11,9 +11,14 @@ import (
 var _ = net.Listen
 var _ = os.Exit
 
+type Path struct {
+	FullPath string
+	Parts    []string
+}
+
 type Request struct {
 	Method string
-	Path   string
+	Path   Path
 }
 
 func main() {
@@ -34,12 +39,39 @@ func main() {
 
 	request := parseRequest(requestStr)
 
-	if request.Path != "/" {
+	if request.Path.Parts[0] == "echo" {
+		writeResponse(conn, request.Path.Parts[1])
+	} else if request.Path.FullPath == "/" {
+		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+	} else {
 		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
-		return
 	}
+}
 
-	conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
+func writeResponse(conn net.Conn, response string) {
+	writeStatusLine(conn, 200)
+	writeHeader(conn, "Content-Type", "text/plain")
+	writeHeader(conn, "Content-Length", fmt.Sprintf("%d", len(response)))
+	conn.Write([]byte(fmt.Sprintf("\r\n%s", response)))
+}
+
+func writeStatusLine(conn net.Conn, statusCode int) {
+	conn.Write([]byte(fmt.Sprintf("HTTP/1.1 %s\r\n", lineForStatusCode(statusCode))))
+}
+
+func lineForStatusCode(statusCode int) string {
+	switch statusCode {
+	case 200:
+		return "200 OK"
+	case 404:
+		return "404 Not Found"
+	default:
+		return "500 Internal Server Error"
+	}
+}
+
+func writeHeader(conn net.Conn, header string, value string) {
+	conn.Write([]byte(fmt.Sprintf("%s: %s\r\n", header, value)))
 }
 
 func parseRequest(request []byte) Request {
@@ -48,6 +80,14 @@ func parseRequest(request []byte) Request {
 	requestLineParts := strings.Split(requestLine, " ")
 	return Request{
 		Method: requestLineParts[0],
-		Path:   requestLineParts[1],
+		Path:   parsePath(requestLineParts[1]),
+	}
+}
+
+func parsePath(path string) Path {
+	pathParts := strings.Split(path, "/")
+	return Path{
+		FullPath: path,
+		Parts:    pathParts[1:],
 	}
 }
