@@ -4,8 +4,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -24,6 +26,7 @@ type Request struct {
 	Method string
 	Path   Path
 	Headers map[string]string
+	Body []byte
 }
 
 type Response struct {
@@ -65,7 +68,11 @@ func handleRequest(conn net.Conn) {
 		useragent := request.Headers["User-Agent"]
 		writeOKResponse(conn, []byte(useragent))
 	} else if request.Path.PathParameters[0] == "files" {
-		writeFileResponse(conn, request.Path.PathParameters)
+		if request.Method == "GET" {
+			writeFileResponse(conn, request.Path.PathParameters[1:])
+		} else if request.Method == "POST" {
+			createFile(conn, request)
+		}
 	} else if request.Path.FullPath == "/" {
 		writeOKResponse(conn, []byte("HTTP/1.1 200 OK\r\n"))
 	} else {
@@ -103,6 +110,15 @@ func writeErrorResponse(conn net.Conn) {
 	writeResponse(conn, response)
 }
 
+func writeServerErrorResponse(conn net.Conn) {
+	response := Response {
+		Status: 500,
+		Headers: make(map[string]string),
+		Body: []byte("Internal Server Error"),
+	}
+	writeResponse(conn, response)
+}
+
 func writeResponse(conn net.Conn, response Response) {
 	writeStatusLine(conn, response.Status)
 	for header, value := range response.Headers {
@@ -119,12 +135,8 @@ func writeStatusLine(conn net.Conn, statusCode int) {
 	conn.Write([]byte(fmt.Sprintf("HTTP/1.1 %s\r\n", lineForStatusCode(statusCode))))
 }
 
-func writeFileResponse(conn net.Conn, args []string) {
-	if len(args) != 2 {
-		writeErrorResponse(conn)
-		return
-	}
-	filename := args[1]
+func writeFileResponse(conn net.Conn, params []string) {
+	filename := params[0]
 	filePath := fmt.Sprintf("%s/%s", fileRoot, filename)
 	content, err := os.ReadFile(filePath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -141,10 +153,29 @@ func writeFileResponse(conn net.Conn, args []string) {
 	writeResponse(conn, response)
 }
 
+func createFile(conn net.Conn, request Request) {
+	filePath := fmt.Sprintf("%s/%s", fileRoot, request.Path.PathParameters[1])
+	fmt.Printf("Writing %s to file %s\n", request.Body, filePath)
+	err := os.WriteFile(filePath, request.Body, 0666)
+	if err == nil {
+		response := Response {
+			Status: 201,
+			Headers: make(map[string]string),
+			Body: []byte("201 Created"),
+		}
+		writeResponse(conn, response)
+	} else {
+		log.Fatal(err)
+		writeServerErrorResponse(conn)
+	}
+}
+
 func lineForStatusCode(statusCode int) string {
 	switch statusCode {
 	case 200:
 		return "200 OK"
+	case 201:
+		return "201 Created"
 	case 400:
 		return "400 Bad Request"
 	case 404:
@@ -158,8 +189,8 @@ func writeHeader(conn net.Conn, header string, value string) {
 	conn.Write([]byte(fmt.Sprintf("%s: %s\r\n", header, value)))
 }
 
-func parseRequest(requestStrings []byte) Request {
-	requestLines := strings.Split(string(requestStrings), "\r\n")
+func parseRequest(requestString []byte) Request {
+	requestLines := strings.Split(string(requestString), "\r\n")
 	requestLine := requestLines[0]
 	requestLineParts := strings.Split(requestLine, " ")
 
@@ -170,6 +201,11 @@ func parseRequest(requestStrings []byte) Request {
 
 	if len(requestLines) > 1 {
 		request.Headers = parseHeaders(requestLines[1:])
+	}
+
+	contentLength, err := strconv.Atoi(request.Headers["Content-Length"])
+	if err == nil {
+		request.Body = []byte(requestLines[len(requestLines)-1])[:contentLength]
 	}
 
 	return request
