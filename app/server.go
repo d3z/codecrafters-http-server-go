@@ -19,6 +19,7 @@ type Path struct {
 type Request struct {
 	Method string
 	Path   Path
+	Command string
 	Headers map[string]string
 }
 
@@ -29,31 +30,41 @@ func main() {
 		os.Exit(1)
 	}
 
-	conn, err := l.Accept()
-	if err != nil {
-		fmt.Println("Error accepting connection: ", err.Error())
-		os.Exit(1)
-	}
+	for {
+		conn, err := l.Accept()
+		if err != nil {
+			fmt.Println("Error accepting connection: ", err.Error())
+			os.Exit(1)
+		}
 
-	requestStr := make([]byte, 1024)
-	_, err = conn.Read(requestStr)
-
-	request := parseRequest(requestStr)
-
-	if request.Path.Parts[0] == "echo" {
-		writeResponse(conn, request.Path.Parts[1])
-	} else if request.Path.Parts[0] == "user-agent" {
-		useragent := request.Headers["User-Agent"]
-		writeResponse(conn, useragent)
-	} else if request.Path.FullPath == "/" {
-		conn.Write([]byte("HTTP/1.1 200 OK\r\n\r\n"))
-	} else {
-		conn.Write([]byte("HTTP/1.1 404 Not Found\r\n\r\n"))
+		go handleRequest(conn)
 	}
 }
 
-func writeResponse(conn net.Conn, response string) {
-	writeStatusLine(conn, 200)
+func handleRequest(conn net.Conn) {
+	requestStr := make([]byte, 1024)
+	conn.Read(requestStr)
+
+	request := parseRequest(requestStr)
+
+	if request.Command == "echo" {
+		writeOKResponse(conn, request.Path.Parts[1])
+	} else if request.Command == "user-agent" {
+		useragent := request.Headers["User-Agent"]
+		writeOKResponse(conn, useragent)
+	} else if request.Path.FullPath == "/" {
+		writeOKResponse(conn, "HTTP/1.1 200 OK\r\n")
+	} else {
+		writeResponse(conn, 404, "Not Found")
+	}
+}
+
+func writeOKResponse(conn net.Conn, response string) {
+	writeResponse(conn, 200, response)
+}
+
+func writeResponse(conn net.Conn, status int, response string) {
+	writeStatusLine(conn, status)
 	writeHeader(conn, "Content-Type", "text/plain")
 	writeHeader(conn, "Content-Length", fmt.Sprintf("%d", len(response)))
 	conn.Write([]byte(fmt.Sprintf("\r\n%s", response)))
@@ -87,6 +98,7 @@ func parseRequest(requestStrings []byte) Request {
 		Method: requestLineParts[0],
 		Path:   parsePath(requestLineParts[1]),
 	}
+	request.Command = request.Path.Parts[0]
 
 	if len(requestLines) > 1 {
 		request.Headers = parseHeaders(requestLines[1:])
