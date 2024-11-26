@@ -90,9 +90,11 @@ func handleEchoRequest(conn net.Conn, request Request) {
 	headers := make(map[string]string)
 	headers["Content-Type"] = "text/plain"
 	headers["Content-Length"] = fmt.Sprintf("%d", len(request.Path.PathParameters[1]))
-	encoding := request.Headers["Accept-Encoding"]
-	if encoding == "gzip" {
-		headers["Content-Encoding"] = "gzip"
+	encodings := strings.Split(request.Headers["Accept-Encoding"], ", ")
+	for _, encoding := range encodings {
+		if encoding == "gzip" {
+			headers["Content-Encoding"] = "gzip"
+		}
 	}
 	response := Response{
 		Status:  200,
