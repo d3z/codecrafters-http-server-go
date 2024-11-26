@@ -11,28 +11,24 @@ import (
 	"strings"
 )
 
-// Ensures gofmt doesn't remove the "net" and "os" imports above (feel free to remove this!)
-var _ = net.Listen
-var _ = os.Exit
-
 var fileRoot string
 
 type Path struct {
-	FullPath string
-	PathParameters    []string
+	FullPath       string
+	PathParameters []string
 }
 
 type Request struct {
-	Method string
-	Path   Path
+	Method  string
+	Path    Path
 	Headers map[string]string
-	Body []byte
+	Body    []byte
 }
 
 type Response struct {
-	Status int
+	Status  int
 	Headers map[string]string
-	Body []byte
+	Body    []byte
 }
 
 func main() {
@@ -58,12 +54,18 @@ func main() {
 
 func handleRequest(conn net.Conn) {
 	requestStr := make([]byte, 1024)
-	conn.Read(requestStr)
+	_, err := conn.Read(requestStr)
+
+	if err != nil {
+		fmt.Println("Error reading request: ", err.Error())
+		writeErrorResponse(conn)
+		return
+	}
 
 	request := parseRequest(requestStr)
 
 	if request.Path.PathParameters[0] == "echo" {
-		writeOKResponse(conn, []byte(request.Path.PathParameters[1]))
+		handleEchoRequest(conn, request)
 	} else if request.Path.PathParameters[0] == "user-agent" {
 		useragent := request.Headers["User-Agent"]
 		writeOKResponse(conn, []byte(useragent))
@@ -80,41 +82,61 @@ func handleRequest(conn net.Conn) {
 	}
 }
 
+func handleEchoRequest(conn net.Conn, request Request) {
+	if len(request.Path.PathParameters) != 2 {
+		writeErrorResponse(conn)
+		return
+	}
+	headers := make(map[string]string)
+	headers["Content-Type"] = "text/plain"
+	headers["Content-Length"] = fmt.Sprintf("%d", len(request.Path.PathParameters[1]))
+	encoding := request.Headers["Accept-Encoding"]
+	if encoding == "gzip" {
+		headers["Content-Encoding"] = "gzip"
+	}
+	response := Response{
+		Status:  200,
+		Headers: headers,
+		Body:    []byte(request.Path.PathParameters[1]),
+	}
+	writeResponse(conn, response)
+}
+
 func writeOKResponse(conn net.Conn, body []byte) {
 	headers := make(map[string]string)
 	headers["Content-Type"] = "text/plain"
 	headers["Content-Length"] = fmt.Sprintf("%d", len(body))
-	response := Response {
-		Status: 200,
+	response := Response{
+		Status:  200,
 		Headers: headers,
-		Body: body,
+		Body:    body,
 	}
 	writeResponse(conn, response)
 }
 
 func writeNotFoundResponse(conn net.Conn) {
-	response := Response {
-		Status: 404,
+	response := Response{
+		Status:  404,
 		Headers: make(map[string]string),
-		Body: []byte("404 Not Found"),
+		Body:    []byte("404 Not Found"),
 	}
 	writeResponse(conn, response)
 }
 
 func writeErrorResponse(conn net.Conn) {
-	response := Response {
-		Status: 400,
+	response := Response{
+		Status:  400,
 		Headers: make(map[string]string),
-		Body: []byte("Bad request"),
+		Body:    []byte("Bad Request"),
 	}
 	writeResponse(conn, response)
 }
 
 func writeServerErrorResponse(conn net.Conn) {
-	response := Response {
-		Status: 500,
+	response := Response{
+		Status:  500,
 		Headers: make(map[string]string),
-		Body: []byte("Internal Server Error"),
+		Body:    []byte("Internal Server Error"),
 	}
 	writeResponse(conn, response)
 }
@@ -127,12 +149,17 @@ func writeResponse(conn net.Conn, response Response) {
 	if response.Headers["Content-Length"] == "" {
 		writeHeader(conn, "Content-Length", fmt.Sprintf("%d", len(response.Body)))
 	}
-	conn.Write([]byte("\r\n"))
-	conn.Write(response.Body)
+	_, err := conn.Write([]byte(fmt.Sprintf("\r\n%s", response.Body)))
+	if err != nil {
+		fmt.Println("Error writing response: ", err.Error())
+	}
 }
 
 func writeStatusLine(conn net.Conn, statusCode int) {
-	conn.Write([]byte(fmt.Sprintf("HTTP/1.1 %s\r\n", lineForStatusCode(statusCode))))
+	_, err := conn.Write([]byte(fmt.Sprintf("HTTP/1.1 %s\r\n", lineForStatusCode(statusCode))))
+	if err != nil {
+		fmt.Println("Error writing status line: ", err.Error())
+	}
 }
 
 func writeFileResponse(conn net.Conn, params []string) {
@@ -146,9 +173,9 @@ func writeFileResponse(conn net.Conn, params []string) {
 	headers["Content-Type"] = "application/octet-stream"
 	headers["Content-Length"] = fmt.Sprintf("%d", len(content))
 	response := Response{
-		Status: 200,
+		Status:  200,
 		Headers: headers,
-		Body: content,
+		Body:    content,
 	}
 	writeResponse(conn, response)
 }
@@ -158,15 +185,15 @@ func createFile(conn net.Conn, request Request) {
 	fmt.Printf("Writing %s to file %s\n", request.Body, filePath)
 	err := os.WriteFile(filePath, request.Body, 0666)
 	if err == nil {
-		response := Response {
-			Status: 201,
+		response := Response{
+			Status:  201,
 			Headers: make(map[string]string),
-			Body: []byte("201 Created"),
+			Body:    []byte("201 Created"),
 		}
 		writeResponse(conn, response)
 	} else {
-		log.Fatal(err)
 		writeServerErrorResponse(conn)
+		log.Fatal(err)
 	}
 }
 
@@ -186,7 +213,9 @@ func lineForStatusCode(statusCode int) string {
 }
 
 func writeHeader(conn net.Conn, header string, value string) {
-	conn.Write([]byte(fmt.Sprintf("%s: %s\r\n", header, value)))
+	_, err := conn.Write([]byte(fmt.Sprintf("%s: %s\r\n", header, value)))
+	if err != nil {
+	}
 }
 
 func parseRequest(requestString []byte) Request {
@@ -214,8 +243,8 @@ func parseRequest(requestString []byte) Request {
 func parsePath(path string) Path {
 	pathParts := strings.Split(path, "/")
 	return Path{
-		FullPath: path,
-		PathParameters:    pathParts[1:],
+		FullPath:       path,
+		PathParameters: pathParts[1:],
 	}
 }
 
