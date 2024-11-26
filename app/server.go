@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"errors"
 	"flag"
 	"fmt"
@@ -87,21 +89,35 @@ func handleEchoRequest(conn net.Conn, request Request) {
 		writeErrorResponse(conn)
 		return
 	}
+	body := []byte(request.Path.PathParameters[1])
 	headers := make(map[string]string)
-	headers["Content-Type"] = "text/plain"
-	headers["Content-Length"] = fmt.Sprintf("%d", len(request.Path.PathParameters[1]))
 	encodings := strings.Split(request.Headers["Accept-Encoding"], ", ")
 	for _, encoding := range encodings {
 		if encoding == "gzip" {
 			headers["Content-Encoding"] = "gzip"
+			body = gzipCompress(body)
 		}
 	}
+	headers["Content-Type"] = "text/plain"
+	headers["Content-Length"] = fmt.Sprintf("%d", len(body))
 	response := Response{
 		Status:  200,
 		Headers: headers,
-		Body:    []byte(request.Path.PathParameters[1]),
+		Body:    body,
 	}
 	writeResponse(conn, response)
+}
+
+func gzipCompress(data []byte) []byte {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(data); err != nil {
+		log.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		log.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 func writeOKResponse(conn net.Conn, body []byte) {
